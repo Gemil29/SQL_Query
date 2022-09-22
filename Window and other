@@ -1,0 +1,77 @@
+select distinct t2.Consultant_id
+	   ,dc.ConsultantNumber
+	   ,dc.ConsultantName
+	   ,dc.Gender
+	   ,AgeGroup
+	   ,OrderFirstPeriod
+	   ,dc.PhoneMain
+	   ,dc.PersonEmail
+	   
+from (
+
+select 
+		 t.Consultant_id
+		,count(iif( dg.FG1 =  N'Парфюмерия', 1, null) ) over (partition by t.Consultant_id) as CountC
+
+
+from (
+
+select	 oi.Consultant_id
+		,mlm.VolumeDiscountRate 
+		,d.PeriodName2
+		,count(iif(mlm.VolumeDiscountRate > 0 ,0,null)) over (partition by  oi.Consultant_id  ) as countMLM
+		,sum( oi.GoodsCount -  isnull(ret.retCount,0)) as qty
+		,sum(( oi.GoodsCount -  isnull(ret.retCount,0)) * oi.GoodsPricePerOne / cr.CorpRate) as opRub
+		,sum(iif(g.FG1 = N'Парфюмерия',1,0))  as kdd
+		,sum( sum(iif(g.FG1 = N'Парфюмерия',1,0)) ) over (partition by oi.consultant_id) as window
+		,count(d.PeriodName2) over (partition by oi.consultant_id) as CountPeriods
+from 
+		dwh.OrderItem as oi
+
+	inner join dmt.DimDate as d on oi.OrderApprovedDate = d.Date_
+	left join (select  cod.OrderItem_id
+					  ,sum(cod.GoodsCount) as retCount
+			   from dwh.ClaimOrderDetail as cod
+			   where cod.ActionRefValue_id = 206793 
+			   group by cod.OrderItem_id
+			   ) as ret on oi.OrderItem_id = ret.OrderItem_id
+	left join dwh.CurrencyRateEachDay as cr on oi.Currency_id = cr.Currency and oi.OrderApprovedDate = cr.Date
+	left join dmt.DimCustomer as dc on oi.Consultant_id = dc.Consultant_id
+	left join Faberlic_DWH.dwh.[Order] as o on oi.order_id = o.Order_id 
+	left join [dwh].CalculationPeriod as cp on d.PeriodNumber = cp.calculationPeriodNumber
+	left join dwh.MLMResult as mlm on oi.Consultant_id = mlm.Consultant_id and cp.CalculationPeriod_id = mlm.CalculationPeriod_id
+	left join dwh.Consultant as c on oi.Consultant_id = c.Consultant_id
+	left join dmt.dimGoods as g ON g.Goods_id = oi.Goods_id
+where 
+		 d.PeriodNumber >= 446
+		and oi.OrderType_id not in (select DocumentType_id from dwh.DocumentType where TypeCode in (N'RETURN', N'RETURN_FUTURE', N'PROMO_POOL'))
+		and oi.OrderState_id not in (select State_id from dwh.Status where StateName = N'ORDER_RETURNED')
+		and c.StoreHome_id in (select store_id from dmt.DimStore where CountryOwnerDP = 'РФ' )
+		and g.fg1 <> N'Другое'
+group by  
+		 oi.Consultant_id	
+		,d.PeriodName2
+		,mlm.VolumeDiscountRate
+
+) as t
+
+left join dwh.OrderItem as o on t.Consultant_id = o.Consultant_id
+left join dmt.dimGoods as dg on o.Goods_id = dg.Goods_id
+
+where
+	  t.window = 0 
+	  and t.Consultant_id is not null
+	  and t.CountPeriods > 2
+
+group by  t.Consultant_id, dg.FG1
+
+				) as t2
+
+left join dmt.DimCustomer as dc on t2.Consultant_id = dc.Consultant_id
+
+where t2.CountC = 0
+
+order by 
+				t2.Consultant_id
+	
+
